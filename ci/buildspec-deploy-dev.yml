@@ -1,0 +1,18 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+      python: 3.12
+    commands:
+      - npm install --no-audit --no-fund
+  build:
+    commands:
+      - echo "== Stage: Deploy to Dev =="
+      - npx sls deploy --stage dev --verbose
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: '.'

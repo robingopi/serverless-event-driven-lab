@@ -1,0 +1,23 @@
+{
+  "Records": [
+    {
+      "eventID": "1",
+      "eventName": "INSERT",
+      "eventSource": "aws:dynamodb",
+      "dynamodb": {
+        "Keys": {
+          "orderId": {"S": "order-abc-123"}
+        },
+        "NewImage": {
+          "orderId": {"S": "order-abc-123"},
+          "sku": {"S": "WIDGET-001"},
+          "quantity": {"N": "3"},
+          "customerId": {"S": "cust-123"},
+          "status": {"S": "CREATED"},
+          "createdAt": {"S": "2026-07-27T10:00:00+00:00"}
+        },
+        "StreamViewType": "NEW_AND_OLD_IMAGES"
+      }
+    }
+  ]
+}

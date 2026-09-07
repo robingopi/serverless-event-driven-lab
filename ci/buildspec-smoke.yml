@@ -1,0 +1,28 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet pytest requests
+  build:
+    commands:
+      - echo "== Stage: Smoke Tests against Prod API =="
+      - mkdir -p reports
+      - >
+        pytest tests/smoke
+        -m smoke
+        -c ci/pytest.ini
+        --junitxml=reports/junit-smoke.xml
+        -v
+
+reports:
+  pytest_smoke_reports:
+    files:
+      - "reports/junit-smoke.xml"
+    file-format: "JUNITXML"
+
+artifacts:
+  files:
+    - reports/**/*

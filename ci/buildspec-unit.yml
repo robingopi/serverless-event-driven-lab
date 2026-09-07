@@ -1,0 +1,36 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet -r requirements.txt -r requirements-dev.txt
+  build:
+    commands:
+      - echo "== Stage: Unit Tests =="
+      - export PYTHONPATH=.:$PYTHONPATH
+      - export AWS_DEFAULT_REGION=us-east-1
+      - mkdir -p reports
+      - >
+        pytest tests/unit
+        -m unit
+        -c ci/pytest.ini
+        --cov=src
+        --cov-config=ci/.coveragerc
+        --cov-report=xml:reports/coverage.xml
+        --cov-report=term-missing
+        --cov-fail-under=80
+        --junitxml=reports/junit-unit.xml
+        -v
+
+reports:
+  pytest_unit_reports:
+    files:
+      - "reports/junit-unit.xml"
+    file-format: "JUNITXML"
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: '.'

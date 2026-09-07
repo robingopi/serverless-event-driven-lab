@@ -1,0 +1,10 @@
+{
+  "Records": [
+    {
+      "messageId": "msg-1",
+      "receiptHandle": "fake-receipt-handle",
+      "body": "{\"version\":\"0\",\"detail-type\":\"OrderCreated\",\"source\":\"order-processing.orders\",\"detail\":{\"orderId\":\"order-abc-123\",\"sku\":\"WIDGET-001\",\"quantity\":3,\"customerId\":\"cust-123\",\"createdAt\":\"2026-07-27T10:00:00+00:00\"}}",
+      "eventSource": "aws:sqs"
+    }
+  ]
+}

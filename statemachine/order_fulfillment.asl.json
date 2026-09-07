@@ -1,0 +1,103 @@
+{
+  "Comment": "Order Fulfillment saga: ValidateOrder -> ReserveInventory -> ChargePayment -> ShipOrder, with compensation (ReleaseInventory) if payment fails after inventory was reserved.",
+  "StartAt": "ValidateOrder",
+  "States": {
+    "ValidateOrder": {
+      "Type": "Task",
+      "Resource": "${ValidateOrderLambdaArn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "OrderFulfillmentFailed"
+        }
+      ],
+      "Next": "ReserveInventory"
+    },
+    "ReserveInventory": {
+      "Type": "Task",
+      "Resource": "${ReserveInventoryLambdaArn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["InsufficientInventoryError"],
+          "ResultPath": "$.error",
+          "Next": "OrderFulfillmentFailed"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "OrderFulfillmentFailed"
+        }
+      ],
+      "Next": "ChargePayment"
+    },
+    "ChargePayment": {
+      "Type": "Task",
+      "Resource": "${ChargePaymentLambdaArn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 2,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["PaymentDeclinedError"],
+          "ResultPath": "$.error",
+          "Next": "ReleaseInventory"
+        },
+        {
+          "ErrorEquals": ["States.ALL"],
+          "ResultPath": "$.error",
+          "Next": "ReleaseInventory"
+        }
+      ],
+      "Next": "ShipOrder"
+    },
+    "ShipOrder": {
+      "Type": "Task",
+      "Resource": "${ShipOrderLambdaArn}",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0
+        }
+      ],
+      "Next": "OrderFulfillmentSucceeded"
+    },
+    "ReleaseInventory": {
+      "Type": "Task",
+      "Resource": "${ReleaseInventoryLambdaArn}",
+      "Comment": "Compensating action: undo the inventory reservation because payment failed.",
+      "Next": "OrderFulfillmentFailed"
+    },
+    "OrderFulfillmentSucceeded": {
+      "Type": "Succeed"
+    },
+    "OrderFulfillmentFailed": {
+      "Type": "Fail",
+      "Error": "OrderFulfillmentFailed",
+      "Cause": "See $.error for details"
+    }
+  }
+}

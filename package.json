@@ -1,0 +1,18 @@
+{
+  "name": "order-processing-system",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "offline": "sls offline start",
+    "deploy:dev": "sls deploy --stage dev",
+    "deploy:prod": "sls deploy --stage prod",
+    "package": "sls package --stage dev",
+    "remove:dev": "sls remove --stage dev"
+  },
+  "devDependencies": {
+    "serverless": "^3.39.0",
+    "serverless-python-requirements": "^6.1.1",
+    "serverless-offline": "^13.3.3",
+    "serverless-step-functions": "^3.19.0"
+  }
+}

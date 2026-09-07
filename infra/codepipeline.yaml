@@ -1,0 +1,358 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  CI/CD pipeline for the serverless order-processing-system: Lint -> UnitTest
+  -> Package -> DeployDev -> IntegrationTest -> QualityGate -> ManualApproval
+  -> DeployProd -> SmokeTest. Source is CodeCommit. CodeBuild runs `serverless
+  deploy` using an IAM role broad enough for this lab; scope down per-service
+  in a real environment.
+
+Parameters:
+  RepositoryName:
+    Type: String
+    Default: serverless-event-driven-lab
+  BranchName:
+    Type: String
+    Default: main
+  CoverageThreshold:
+    Type: Number
+    Default: 80
+
+Resources:
+
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${AWS::StackName}-artifacts-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+
+  CodeRepo:
+    Type: AWS::CodeCommit::Repository
+    Properties:
+      RepositoryName: !Ref RepositoryName
+      RepositoryDescription: Source for the serverless & event-driven systems lab
+
+  CodeBuildServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codebuild.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchLogsFullAccess
+      Policies:
+        - PolicyName: CodeBuildArtifactsAndDeploy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketAcl
+                  - s3:GetBucketLocation
+                Resource:
+                  - !Sub "${ArtifactBucket.Arn}"
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                # NOTE: broad for lab simplicity. In production, scope this
+                # to exactly the services `serverless.yml` provisions
+                # (Lambda, DynamoDB, EventBridge, SQS, Step Functions,
+                # CloudFormation, IAM PassRole) and split dev/prod into
+                # separate cross-account roles as described in
+                # docs/04-cicd-for-serverless.md.
+                Action:
+                  - cloudformation:*
+                  - lambda:*
+                  - dynamodb:*
+                  - events:*
+                  - sqs:*
+                  - states:*
+                  - iam:GetRole
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:PassRole
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - logs:*
+                  - apigateway:*
+                  - s3:*
+                Resource: "*"
+
+  CodePipelineServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CodePipelineAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:GetBucketVersioning
+                Resource:
+                  - !Sub "${ArtifactBucket.Arn}"
+                  - !Sub "${ArtifactBucket.Arn}/*"
+              - Effect: Allow
+                Action:
+                  - codecommit:GetBranch
+                  - codecommit:GetCommit
+                  - codecommit:UploadArchive
+                  - codecommit:GetUploadArchiveStatus
+                  - codecommit:CancelUploadArchive
+                Resource: !GetAtt CodeRepo.Arn
+              - Effect: Allow
+                Action:
+                  - codebuild:BatchGetBuilds
+                  - codebuild:StartBuild
+                Resource: "*"
+
+  LintProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-lint"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-lint.yml
+
+  UnitTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-unit-tests"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-unit.yml
+
+  PackageProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-package"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-package.yml
+
+  DeployDevProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-deploy-dev"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-deploy-dev.yml
+
+  IntegrationTestProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-integration-tests"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-integration.yml
+
+  QualityGateProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-quality-gate"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: COVERAGE_THRESHOLD
+            Value: !Ref CoverageThreshold
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-quality-gate.yml
+
+  DeployProdProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-deploy-prod"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_MEDIUM
+        Image: aws/codebuild/standard:7.0
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-deploy-prod.yml
+
+  SmokeTestProdProject:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: !Sub "${AWS::StackName}-smoke-prod"
+      ServiceRole: !GetAtt CodeBuildServiceRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:7.0
+        EnvironmentVariables:
+          - Name: API_BASE_URL
+            Value: "https://REPLACE-WITH-PROD-API-URL"
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: ci/buildspec-smoke.yml
+
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      Name: !Sub "${AWS::StackName}-pipeline"
+      RoleArn: !GetAtt CodePipelineServiceRole.Arn
+      ArtifactStore:
+        Type: S3
+        Location: !Ref ArtifactBucket
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: CodeCommit
+                Version: "1"
+              Configuration:
+                RepositoryName: !Ref RepositoryName
+                BranchName: !Ref BranchName
+              OutputArtifacts:
+                - Name: SourceOutput
+
+        - Name: Lint
+          Actions:
+            - Name: LintAndStaticAnalysis
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref LintProject
+              InputArtifacts: [{Name: SourceOutput}]
+              OutputArtifacts: [{Name: LintOutput}]
+
+        - Name: UnitTest
+          Actions:
+            - Name: RunUnitTests
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref UnitTestProject
+              InputArtifacts: [{Name: LintOutput}]
+              OutputArtifacts: [{Name: UnitTestOutput}]
+
+        - Name: Package
+          Actions:
+            - Name: ValidateServerlessPackage
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref PackageProject
+              InputArtifacts: [{Name: UnitTestOutput}]
+              OutputArtifacts: [{Name: PackageOutput}]
+
+        - Name: DeployDev
+          Actions:
+            - Name: ServerlessDeployDev
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref DeployDevProject
+              InputArtifacts: [{Name: PackageOutput}]
+              OutputArtifacts: [{Name: DeployDevOutput}]
+
+        - Name: IntegrationTest
+          Actions:
+            - Name: RunIntegrationTests
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref IntegrationTestProject
+              InputArtifacts: [{Name: DeployDevOutput}]
+              OutputArtifacts: [{Name: IntegrationTestOutput}]
+
+        - Name: QualityGate
+          Actions:
+            - Name: EvaluateQualityGate
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref QualityGateProject
+              InputArtifacts: [{Name: IntegrationTestOutput}]
+              OutputArtifacts: [{Name: QualityGateOutput}]
+
+        - Name: ManualApprovalForProd
+          Actions:
+            - Name: ApproveProductionRelease
+              ActionTypeId: {Category: Approval, Owner: AWS, Provider: Manual, Version: "1"}
+              Configuration:
+                CustomData: "Lint/UnitTest/Package/DeployDev/IntegrationTest/QualityGate all passed. Approve production deploy?"
+
+        - Name: DeployProd
+          Actions:
+            - Name: ServerlessDeployProd
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref DeployProdProject
+              InputArtifacts: [{Name: QualityGateOutput}]
+              OutputArtifacts: [{Name: DeployProdOutput}]
+
+        - Name: SmokeTestProd
+          Actions:
+            - Name: RunProdSmokeTests
+              ActionTypeId: {Category: Build, Owner: AWS, Provider: CodeBuild, Version: "1"}
+              Configuration:
+                ProjectName: !Ref SmokeTestProdProject
+              InputArtifacts: [{Name: DeployProdOutput}]
+
+Outputs:
+  PipelineName:
+    Value: !Ref Pipeline
+  RepositoryCloneUrlHttp:
+    Value: !GetAtt CodeRepo.CloneUrlHttp
+  ArtifactBucketName:
+    Value: !Ref ArtifactBucket

@@ -1,0 +1,287 @@
+service: order-processing-system
+
+frameworkVersion: '3'
+
+plugins:
+  - serverless-python-requirements
+  - serverless-step-functions
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: python3.11
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'us-east-1'}
+
+  environment:
+    ORDERS_TABLE: ${self:service}-orders-${self:provider.stage}
+    IDEMPOTENCY_TABLE: ${self:service}-idempotency-${self:provider.stage}
+    EVENT_BUS_NAME: ${self:service}-bus-${self:provider.stage}
+
+  iamRoleStatements:
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+      Resource:
+        Fn::GetAtt:
+          - OrdersTable
+          - Arn
+
+    - Effect: Allow
+      Action:
+        - events:PutEvents
+      Resource:
+        Fn::GetAtt:
+          - OrderEventBus
+          - Arn
+
+    - Effect: Allow
+      Action:
+        - dynamodb:PutItem
+      Resource:
+        Fn::GetAtt:
+          - IdempotencyTable
+          - Arn
+
+custom:
+  pythonRequirements:
+    dockerizePip: false
+    slim: true
+
+functions:
+
+  createOrder:
+    handler: src/handlers/create_order.handler
+    events:
+      - httpApi:
+          path: /orders
+          method: post
+
+  processOrderStream:
+    handler: src/handlers/process_order_stream.handler
+    events:
+      - stream:
+          type: dynamodb
+          arn:
+            Fn::GetAtt:
+              - OrdersTable
+              - StreamArn
+          startingPosition: LATEST
+          batchSize: 10
+          maximumRetryAttempts: 3
+
+  notifyCustomer:
+    handler: src/handlers/notify_customer.handler
+    events:
+      - sqs:
+          arn:
+            Fn::GetAtt:
+              - NotificationQueue
+              - Arn
+          batchSize: 5
+
+  validateOrder:
+    handler: src/handlers/order_fulfillment_tasks.validate_order
+
+  reserveInventory:
+    handler: src/handlers/order_fulfillment_tasks.reserve_inventory
+
+  chargePayment:
+    handler: src/handlers/order_fulfillment_tasks.charge_payment
+
+  shipOrder:
+    handler: src/handlers/order_fulfillment_tasks.ship_order
+
+  releaseInventory:
+    handler: src/handlers/order_fulfillment_tasks.release_inventory
+
+stepFunctions:
+  stateMachines:
+    orderFulfillment:
+      name: ${self:service}-fulfillment-${self:provider.stage}
+      definition: ${file(statemachine/order_fulfillment.asl.json)}
+      events:
+        - eventBridge:
+            event:
+              source:
+                - order-processing.orders
+            eventBus:
+              Fn::GetAtt:
+                - OrderEventBus
+                - Arn
+            pattern:
+              source:
+                - order-processing.orders
+              detail-type:
+                - OrderCreated
+
+resources:
+  Resources:
+
+    OrdersTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.ORDERS_TABLE}
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+          - AttributeName: orderId
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: orderId
+            KeyType: HASH
+
+        StreamSpecification:
+          StreamViewType: NEW_AND_OLD_IMAGES
+
+    IdempotencyTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: ${self:provider.environment.IDEMPOTENCY_TABLE}
+        BillingMode: PAY_PER_REQUEST
+
+        AttributeDefinitions:
+          - AttributeName: idempotency_key
+            AttributeType: S
+
+        KeySchema:
+          - AttributeName: idempotency_key
+            KeyType: HASH
+
+        TimeToLiveSpecification:
+          AttributeName: expires_at
+          Enabled: true
+
+    OrderEventBus:
+      Type: AWS::Events::EventBus
+      Properties:
+        Name: ${self:provider.environment.EVENT_BUS_NAME}
+
+    NotificationQueue:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-notifications-${self:provider.stage}
+
+        RedrivePolicy:
+          deadLetterTargetArn:
+            Fn::GetAtt:
+              - NotificationDLQ
+              - Arn
+          maxReceiveCount: 3
+
+    NotificationDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-notifications-dlq-${self:provider.stage}
+        MessageRetentionPeriod: 1209600
+
+    StreamProcessorDLQ:
+      Type: AWS::SQS::Queue
+      Properties:
+        QueueName: ${self:service}-stream-processor-dlq-${self:provider.stage}
+
+    NotificationRule:
+      Type: AWS::Events::Rule
+      Properties:
+        EventBusName:
+          Ref: OrderEventBus
+
+        EventPattern:
+          source:
+            - order-processing.orders
+
+          detail-type:
+            - OrderCreated
+
+        Targets:
+          - Arn:
+              Fn::GetAtt:
+                - NotificationQueue
+                - Arn
+            Id: NotificationQueueTarget
+
+    NotificationQueuePolicy:
+      Type: AWS::SQS::QueuePolicy
+      Properties:
+        Queues:
+          - Ref: NotificationQueue
+
+        PolicyDocument:
+          Statement:
+            - Effect: Allow
+
+              Principal:
+                Service: events.amazonaws.com
+
+              Action:
+                - sqs:SendMessage
+
+              Resource:
+                Fn::GetAtt:
+                  - NotificationQueue
+                  - Arn
+
+              Condition:
+                ArnEquals:
+                  aws:SourceArn:
+                    Fn::GetAtt:
+                      - NotificationRule
+                      - Arn
+
+    NotificationDLQAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-notification-dlq-alarm-${self:provider.stage}
+
+        AlarmDescription: >
+          Alerts when messages land in the notification DLQ
+          (failed after 3 retries)
+
+        Namespace: AWS/SQS
+        MetricName: ApproximateNumberOfMessagesVisible
+
+        Dimensions:
+          - Name: QueueName
+            Value:
+              Fn::GetAtt:
+                - NotificationDLQ
+                - QueueName
+
+        Statistic: Maximum
+        Period: 300
+        EvaluationPeriods: 1
+        Threshold: 0
+        ComparisonOperator: GreaterThanThreshold
+
+    ErrorsAlarm:
+      Type: AWS::CloudWatch::Alarm
+      Properties:
+        AlarmName: ${self:service}-lambda-errors-${self:provider.stage}
+
+        Namespace: AWS/Lambda
+        MetricName: Errors
+
+        Statistic: Sum
+        Period: 60
+        EvaluationPeriods: 1
+        Threshold: 1
+
+        ComparisonOperator: GreaterThanOrEqualToThreshold
+        TreatMissingData: notBreaching
+
+outputs:
+
+  OrderEventBusArn:
+    Value:
+      Fn::GetAtt:
+        - OrderEventBus
+        - Arn
+
+  OrdersTableName:
+    Value:
+      Ref: OrdersTable
+
+  NotificationDLQUrl:
+    Value:
+      Ref: NotificationDLQ

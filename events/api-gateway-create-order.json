@@ -1,0 +1,13 @@
+{
+  "version": "2.0",
+  "routeKey": "POST /orders",
+  "rawPath": "/orders",
+  "body": "{\"sku\": \"WIDGET-001\", \"quantity\": 3, \"customerId\": \"cust-123\"}",
+  "isBase64Encoded": false,
+  "requestContext": {
+    "http": {
+      "method": "POST",
+      "path": "/orders"
+    }
+  }
+}

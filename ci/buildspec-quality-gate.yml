@@ -1,0 +1,20 @@
+version: 0.2
+
+env:
+  variables:
+    COVERAGE_THRESHOLD: "80"
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet -r requirements.txt
+  build:
+    commands:
+      - echo "== Stage: Quality Gate =="
+      - python quality_gates/quality_gate.py
+
+artifacts:
+  files:
+    - reports/quality-gate-result.json

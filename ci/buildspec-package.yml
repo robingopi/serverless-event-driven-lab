@@ -1,0 +1,20 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 20
+      python: 3.12
+    commands:
+      - npm install --no-audit --no-fund
+      - pip install --quiet -r requirements.txt
+  build:
+    commands:
+      - echo "== Stage: Package (validate serverless.yml + build artifact, no deploy) =="
+      - npx sls package --stage dev
+
+artifacts:
+  files:
+    - '.serverless/**/*'
+    - '**/*'
+  base-directory: '.'

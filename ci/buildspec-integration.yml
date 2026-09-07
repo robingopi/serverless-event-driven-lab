@@ -1,0 +1,31 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet -r requirements.txt -r requirements-dev.txt
+  build:
+    commands:
+      - echo "== Stage: Integration Tests (moto-backed, fast + deterministic) =="
+      - export PYTHONPATH=.:$PYTHONPATH
+      - export AWS_DEFAULT_REGION=us-east-1
+      - mkdir -p reports
+      - >
+        pytest tests/integration
+        -m integration
+        -c ci/pytest.ini
+        --junitxml=reports/junit-integration.xml
+        -v
+
+reports:
+  pytest_integration_reports:
+    files:
+      - "reports/junit-integration.xml"
+    file-format: "JUNITXML"
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: '.'

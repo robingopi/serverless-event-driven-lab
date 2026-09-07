@@ -1,0 +1,19 @@
+version: 0.2
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.12
+    commands:
+      - pip install --quiet -r requirements-dev.txt
+  build:
+    commands:
+      - echo "== Stage: Lint & Static Analysis =="
+      - mkdir -p reports
+      - flake8 src --max-line-length=110 --output-file=reports/flake8-report.txt || (cat reports/flake8-report.txt && exit 1)
+      - echo "Lint stage complete"
+
+artifacts:
+  files:
+    - '**/*'
+  base-directory: '.'
