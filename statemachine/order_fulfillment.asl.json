@@ -4,8 +4,10 @@
   "States": {
     "ValidateOrder": {
       "Type": "Task",
-      "Resource": "${ValidateOrderLambdaArn}",
-      "Retry": [
+      "Resource": {
+	      "Fn::GetAtt":["ValidateOrderLambdaFunction","Arn"]
+      },
+    "Retry": [
         {
           "ErrorEquals": ["States.TaskFailed"],
           "IntervalSeconds": 2,
@@ -24,7 +26,9 @@
     },
     "ReserveInventory": {
       "Type": "Task",
-      "Resource": "${ReserveInventoryLambdaArn}",
+      "Resource": {
+	      "Fn::GetAtt":["ReserveInventoryLambdaFunction","Arn"]
+      },
       "Retry": [
         {
           "ErrorEquals": ["States.TaskFailed"],
@@ -49,7 +53,9 @@
     },
     "ChargePayment": {
       "Type": "Task",
-      "Resource": "${ChargePaymentLambdaArn}",
+      "Resource": {
+	      "Fn::GetAtt":["ChargePaymentLambdaFunction","Arn"]
+      },
       "Retry": [
         {
           "ErrorEquals": ["States.TaskFailed"],
@@ -74,7 +80,9 @@
     },
     "ShipOrder": {
       "Type": "Task",
-      "Resource": "${ShipOrderLambdaArn}",
+      "Resource": {
+	      "Fn::GetAtt":["ShipOrderLambdaFunction","Arn"]
+      },
       "Retry": [
         {
           "ErrorEquals": ["States.TaskFailed"],
@@ -87,7 +95,9 @@
     },
     "ReleaseInventory": {
       "Type": "Task",
-      "Resource": "${ReleaseInventoryLambdaArn}",
+      "Resource": {
+	      "Fn::GetAtt":["ReleaseInventoryLambdaFunction","Arn"]
+      },
       "Comment": "Compensating action: undo the inventory reservation because payment failed.",
       "Next": "OrderFulfillmentFailed"
     },
